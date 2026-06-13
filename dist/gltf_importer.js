@@ -219,12 +219,38 @@
     const trs = nodeTRS(n);
     return {
       name: n.name || `node_${idx}`,
+      gltfIndex: idx,
       translation: trs.translation,
       rotation: trs.rotation,
       scale: trs.scale,
       box: n.mesh != null ? meshBox(json, buffers, n.mesh) : null,
       children: (n.children || []).map((c) => buildNode(json, buffers, c))
     };
+  }
+  function readAnimations(json, buffers) {
+    if (!json.animations) return [];
+    return json.animations.map((anim, ai) => {
+      const tracks = {};
+      let length = 0;
+      for (const ch of anim.channels) {
+        const sampler = anim.samplers[ch.sampler];
+        const times = readAccessor(json, buffers, sampler.input).data;
+        const values = readAccessor(json, buffers, sampler.output);
+        const nodeIndex = ch.target.node;
+        const path = ch.target.path;
+        if (!tracks[nodeIndex]) tracks[nodeIndex] = { rotation: [], position: [], scale: [] };
+        const n = values.ncomp;
+        for (let k = 0; k < times.length; k++) {
+          const t = times[k];
+          length = Math.max(length, t);
+          const v = values.data.slice(k * n, k * n + n);
+          if (path === "rotation") tracks[nodeIndex].rotation.push({ t, q: v });
+          else if (path === "translation") tracks[nodeIndex].position.push({ t, v });
+          else if (path === "scale") tracks[nodeIndex].scale.push({ t, v });
+        }
+      }
+      return { name: anim.name || `animation_${ai}`, length, tracks };
+    });
   }
   function readGltf(arrayBuffer, opts = {}) {
     const dv = new DataView(arrayBuffer);
@@ -234,7 +260,7 @@
     const buffers = resolveBuffers(json, bin, opts.externalLoader);
     const sceneDef = json.scenes[json.scene ?? 0];
     const roots = sceneDef.nodes.map((i) => buildNode(json, buffers, i));
-    return { roots, texture: readTexture(json, buffers, opts), animations: [], _json: json, _buffers: buffers };
+    return { roots, texture: readTexture(json, buffers, opts), animations: readAnimations(json, buffers), _json: json, _buffers: buffers };
   }
 
   // src/convention.js
@@ -284,9 +310,34 @@
     for (const face of box.faces) out[bbFaceName(face.normal)] = faceToUv(face, tex);
     return out;
   }
+  function convertAnimations(scene, indexToGroup, restRot, localTrans) {
+    return scene.animations.map((anim) => {
+      const tracks = {};
+      for (const [nodeIndex, t] of Object.entries(anim.tracks)) {
+        const gi = indexToGroup[nodeIndex];
+        if (gi == null) continue;
+        const rRot = restRot[nodeIndex] || [0, 0, 0];
+        const lT = localTrans[nodeIndex] || [0, 0, 0];
+        const out = { rotation: [], position: [], scale: [] };
+        for (const k of t.rotation) {
+          const abs = quatToBBEuler(k.q);
+          out.rotation.push({ t: k.t, value: [abs[0] - rRot[0], abs[1] - rRot[1], abs[2] - rRot[2]] });
+        }
+        for (const k of t.position) {
+          out.position.push({ t: k.t, value: applyPos([k.v[0] - lT[0], k.v[1] - lT[1], k.v[2] - lT[2]]) });
+        }
+        for (const k of t.scale) out.scale.push({ t: k.t, value: [k.v[0], k.v[1], k.v[2]] });
+        tracks[gi] = out;
+      }
+      return { name: anim.name, length: anim.length, loop: "loop", tracks };
+    });
+  }
   function convert(scene) {
     const groups = [];
     const cubes = [];
+    const indexToGroup = {};
+    const restRot = {};
+    const localTrans = {};
     function walk(node, parentAccum, parentIndex) {
       const accum = [
         parentAccum[0] + node.translation[0],
@@ -301,6 +352,11 @@
         rotation: quatToBBEuler(node.rotation),
         parent: parentIndex
       });
+      if (node.gltfIndex != null) {
+        indexToGroup[node.gltfIndex] = groupIndex;
+        restRot[node.gltfIndex] = groups[groupIndex].rotation;
+        localTrans[node.gltfIndex] = node.translation;
+      }
       if (node.box) {
         const lo = applyPos([accum[0] + node.box.min[0], accum[1] + node.box.min[1], accum[2] + node.box.min[2]]);
         const hi = applyPos([accum[0] + node.box.max[0], accum[1] + node.box.max[1], accum[2] + node.box.max[2]]);
@@ -311,10 +367,26 @@
       for (const child of node.children) walk(child, accum, groupIndex);
     }
     for (const root of scene.roots) walk(root, [0, 0, 0], null);
-    return { groups, cubes, texture: scene.texture, animations: [] };
+    return { groups, cubes, texture: scene.texture, animations: convertAnimations(scene, indexToGroup, restRot, localTrans) };
   }
 
   // src/adapter.js
+  function buildAnimations(model, bbGroups) {
+    let made = 0;
+    for (const a of model.animations) {
+      const anim = new Animation({ name: a.name, loop: a.loop, length: a.length }).add(false);
+      for (const [gi, track] of Object.entries(a.tracks)) {
+        const group = bbGroups[Number(gi)];
+        if (!group) continue;
+        const animator = anim.getBoneAnimator(group);
+        for (const k of track.rotation) animator.createKeyframe({ x: k.value[0], y: k.value[1], z: k.value[2] }, k.t, "rotation", false, false);
+        for (const k of track.position) animator.createKeyframe({ x: k.value[0], y: k.value[1], z: k.value[2] }, k.t, "position", false, false);
+        for (const k of track.scale) animator.createKeyframe({ x: k.value[0], y: k.value[1], z: k.value[2] }, k.t, "scale", false, false);
+      }
+      made++;
+    }
+    return made;
+  }
   function buildIntoProject(model) {
     Undo.initEdit({ elements: [], textures: [], outliner: true });
     let texture = null;
@@ -344,10 +416,18 @@
       }
       cubes.push(cube);
     }
+    let animCount = 0;
+    if (model.animations && model.animations.length) {
+      if (typeof Format !== "undefined" && Format && Format.animation_mode === false) {
+        Blockbench.showQuickMessage("Imported geometry; this format has no animation support", 2500);
+      } else {
+        animCount = buildAnimations(model, bbGroups);
+      }
+    }
     Canvas.updateAll();
     if (texture) Canvas.updateAllUVs && Canvas.updateAllUVs();
     Undo.finishEdit("Import glTF", { elements: cubes, textures: texture ? [texture] : [], outliner: true });
-    return { groups: bbGroups, cubes, texture };
+    return { groups: bbGroups, cubes, texture, animations: animCount };
   }
 
   // src/entry.js
