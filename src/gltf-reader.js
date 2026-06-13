@@ -188,12 +188,39 @@ function buildNode(json, buffers, idx) {
   const trs = nodeTRS(n);
   return {
     name: n.name || `node_${idx}`,
+    gltfIndex: idx,
     translation: trs.translation,
     rotation: trs.rotation,
     scale: trs.scale,
     box: (n.mesh != null) ? meshBox(json, buffers, n.mesh) : null,
     children: (n.children || []).map((c) => buildNode(json, buffers, c)),
   };
+}
+
+function readAnimations(json, buffers) {
+  if (!json.animations) return [];
+  return json.animations.map((anim, ai) => {
+    const tracks = {};
+    let length = 0;
+    for (const ch of anim.channels) {
+      const sampler = anim.samplers[ch.sampler];
+      const times = readAccessor(json, buffers, sampler.input).data;
+      const values = readAccessor(json, buffers, sampler.output);
+      const nodeIndex = ch.target.node;          // unique, stable key
+      const path = ch.target.path;               // 'rotation' | 'translation' | 'scale'
+      if (!tracks[nodeIndex]) tracks[nodeIndex] = { rotation: [], position: [], scale: [] };
+      const n = values.ncomp;
+      for (let k = 0; k < times.length; k++) {
+        const t = times[k];
+        length = Math.max(length, t);
+        const v = values.data.slice(k * n, k * n + n);
+        if (path === 'rotation') tracks[nodeIndex].rotation.push({ t, q: v });
+        else if (path === 'translation') tracks[nodeIndex].position.push({ t, v });
+        else if (path === 'scale') tracks[nodeIndex].scale.push({ t, v });
+      }
+    }
+    return { name: anim.name || `animation_${ai}`, length, tracks };
+  });
 }
 
 // Entry point. arrayBuffer: .glb or .gltf bytes. opts.externalLoader(uri)->ArrayBuffer for external files.
@@ -205,5 +232,5 @@ export function readGltf(arrayBuffer, opts = {}) {
   const buffers = resolveBuffers(json, bin, opts.externalLoader);
   const sceneDef = json.scenes[json.scene ?? 0];
   const roots = sceneDef.nodes.map((i) => buildNode(json, buffers, i));
-  return { roots, texture: readTexture(json, buffers, opts), animations: [], _json: json, _buffers: buffers };
+  return { roots, texture: readTexture(json, buffers, opts), animations: readAnimations(json, buffers), _json: json, _buffers: buffers };
 }

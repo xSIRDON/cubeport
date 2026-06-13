@@ -53,3 +53,17 @@ test('sample: head box has 6 faces with uvs', () => {
     f.uvs.forEach(([u, v]) => { assert.ok(u >= -0.001 && u <= 1.001); assert.ok(v >= -0.001 && v <= 1.001); });
   }
 });
+
+test('sample: reads 3 animations with per-node tracks', () => {
+  const scene = loadFixture();
+  assert.equal(scene.animations.length, 3);
+  const idle = scene.animations.find((a) => a.name.includes('idle'));
+  assert.ok(idle, 'idle animation present');
+  assert.ok(idle.length > 0, 'has length');
+  const tracks = Object.values(idle.tracks);
+  assert.ok(tracks.length > 0, 'has bone tracks');
+  // track keys are glTF node indices (numeric strings), not names
+  assert.ok(Object.keys(idle.tracks).every((k) => String(Number(k)) === k));
+  // at least one rotation keyframe somewhere
+  assert.ok(tracks.some((t) => t.rotation.length > 0));
+});
