@@ -24,3 +24,17 @@ test('quatMul composes rotations', () => {
   const out = quatMul(qx, [0, 0, 0, 1]);
   closeArr(out, qx);
 });
+
+import { CONVENTION, applyPos, quatToBBEuler } from '../src/convention.js';
+
+test('applyPos scales by 16 and applies flip', () => {
+  // default flip [1,1,1], scale 16
+  closeArr(applyPos([1, 0.5, -0.25]), [16, 8, -4]);
+});
+
+test('quatToBBEuler returns degrees', () => {
+  const q = axisAngleQuat([0, 1, 0], deg(30));
+  const e = quatToBBEuler(q);
+  // y≈30 in default XYZ; sign depends on CONVENTION.eulerSign
+  close(Math.abs(e[1]), 30, 1e-2);
+});
