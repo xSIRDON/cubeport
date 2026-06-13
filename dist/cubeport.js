@@ -469,13 +469,18 @@
 
   // src/entry.js
   var action;
-  Plugin.register("gltf_importer", {
-    title: "glTF/glb Importer",
+  Plugin.register("cubeport", {
+    title: "Cubeport",
     author: "Nicholas Cerdon",
-    description: "Import glTF/glb models as editable bones + cubes into the open project.",
+    description: "Import glTF/glb models as editable cubes, bones, textures, and animations \u2014 for re-importing Minecraft-style models (e.g. from Sketchfab) as real editable boxes instead of raw meshes.",
     icon: "fa-cubes",
-    version: "0.1.0",
+    version: "1.0.0",
     variant: "both",
+    tags: ["Minecraft", "Import", "Animation"],
+    min_version: "4.8.0",
+    website: "https://github.com/xSIRDON/cubeport",
+    repository: "https://github.com/xSIRDON/cubeport",
+    bug_tracker: "https://github.com/xSIRDON/cubeport/issues",
     onload() {
       action = new Action("import_gltf", {
         name: "Import glTF/glb\u2026",

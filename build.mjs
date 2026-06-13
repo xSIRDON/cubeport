@@ -5,7 +5,7 @@ await build({
   bundle: true,
   format: 'iife',
   target: 'es2020',
-  outfile: 'dist/gltf_importer.js',
+  outfile: 'dist/cubeport.js',
   legalComments: 'none',
 });
-console.log('Built dist/gltf_importer.js');
+console.log('Built dist/cubeport.js');

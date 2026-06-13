@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+  <!-- import arrow -->
+  <g fill="#4caf50">
+    <rect x="29" y="2" width="6" height="12" rx="1"/>
+    <path d="M24 12 L32 22 L40 12 Z"/>
+  </g>
+  <!-- isometric cube -->
+  <!-- top face -->
+  <path d="M32 24 L52 34 L32 44 L12 34 Z" fill="#6cc04a"/>
+  <!-- left face -->
+  <path d="M12 34 L32 44 L32 62 L12 52 Z" fill="#3f8f2e"/>
+  <!-- right face -->
+  <path d="M52 34 L32 44 L32 62 L52 52 Z" fill="#54a838"/>
+  <!-- edge highlights -->
+  <path d="M32 24 L52 34 L32 44 L12 34 Z" fill="none" stroke="#2c2c2c" stroke-width="1.5" stroke-linejoin="round"/>
+  <path d="M32 44 L32 62" stroke="#2c2c2c" stroke-width="1.5"/>
+  <path d="M12 34 L12 52 L32 62 L52 52 L52 34" fill="none" stroke="#2c2c2c" stroke-width="1.5" stroke-linejoin="round"/>
+</svg>

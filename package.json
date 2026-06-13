@@ -1,6 +1,6 @@
 {
-  "name": "gltf-importer-blockbench",
-  "version": "0.1.0",
+  "name": "cubeport",
+  "version": "1.0.0",
   "type": "module",
   "private": true,
   "scripts": {
