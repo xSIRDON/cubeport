@@ -64,6 +64,30 @@ test('sample: every cube has positive integer-ish size', () => {
   }
 });
 
+test('face UVs map to pixel rect within texture bounds', () => {
+  const scene = {
+    roots: [node({
+      name: 'c', translation: [0, 0, 0],
+      box: {
+        min: [0, 0, 0], max: [0.0625, 0.0625, 0.0625],
+        faces: [{
+          normal: [0, 0, 1],
+          corners: [[0, 0, 0.0625], [0.0625, 0, 0.0625], [0.0625, 0.0625, 0.0625], [0, 0.0625, 0.0625]],
+          uvs: [[0, 0], [0.25, 0], [0.25, 0.25], [0, 0.25]],
+        }],
+      },
+    })],
+    texture: { name: 't', dataUrl: 'data:', width: 64, height: 64 }, animations: [],
+  };
+  const m = convert(scene);
+  const faces = m.cubes[0].faces;
+  assert.ok(faces, 'faces present');
+  const f = Object.values(faces)[0];
+  // u 0..0.25 × 64 = 0..16 ; v 0..0.25 × 64 = 0..16
+  closeArr([f.uv[0], f.uv[2]].sort((a, b) => a - b), [0, 16]);
+  closeArr([f.uv[1], f.uv[3]].sort((a, b) => a - b), [0, 16]);
+});
+
 // Calibration lock (Task 6): the neutral CONVENTION (×16, no flip, XYZ Euler) was confirmed
 // correct by visual check in Blockbench. Pin the head bone (via the head cube → its group,
 // robust to the duplicate 'head' parent group) so a convention change can't silently regress it.
