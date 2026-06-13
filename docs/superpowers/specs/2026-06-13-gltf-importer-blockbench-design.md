@@ -129,14 +129,29 @@ Walk the scene graph depth-first, producing the intermediate model:
   node with a box mesh → group containing one cube (keeps rotation on the group so
   the cube stays axis-aligned, which all target formats support).
 - **Scale:** multiply all positions/sizes by `SCALE = 16` (configurable override).
-- **Pivot:** group `origin` = node world translation × 16 (accumulate parent
-  translations so Bedrock-style global pivots are correct). Cube `origin` = its
-  group origin.
+- **World matrices:** after load, call `scene.updateMatrixWorld(true)` so each
+  node's world matrix is available. The composition below uses these — *not* raw
+  local translations — which is why the earlier hand-wave of "translation + min"
+  is replaced by the explicit rules here.
+
+  Blockbench bones (Bedrock/GeckoLib/Modded convention) store **rotation as local**
+  (relative to parent) and **pivot/origin in global model space**, composing the
+  same way glTF nodes do (`world = parent_world · local`). So the mapping is:
+- **Rotation:** bone `rotation` = the node's **local** quaternion → Euler degrees
+  (Blockbench's Euler order). Parent-rotation inheritance reproduces the world
+  rotation automatically. Cube rotation left at 0.
+- **Pivot:** bone `origin` = node **world** translation × 16 (from the world
+  matrix). Cube `origin` = its bone origin.
 - **Size + position:** read `geometry.boundingBox` (`min`/`max`) in node-local
-  space; `from = (translation + min) × 16`, `to = (translation + max) × 16`.
-  Verified to produce clean integers on the sample.
-- **Rotation:** convert node quaternion → Euler degrees in the order Blockbench
-  expects; assign to the group. (Cube rotation left at 0.)
+  space. The box must be placed in the bone's *pre-rotation* frame (the parent's
+  world frame), since the bone's own rotation rotates the cube around the pivot at
+  runtime. So each corner = `parentWorldMatrix · (nodeLocalTranslation + corner)`,
+  then × 16, giving axis-aligned `from`/`to`. Confirmed to produce clean integers
+  on the sample.
+- **Flatten fallback:** if hierarchy composition proves unreliable during
+  calibration, fall back to a flat bone list using each node's full world matrix
+  (world pivot + world rotation, cube corners in world space). Geometrically exact,
+  at the cost of editable nesting. Decision made during phase 1 against the sample.
 - **Coordinate convention:** apply the axis transform that inverts Blockbench's
   glTF export (see "Coordinate calibration"). Encapsulated in one
   `gltfToBlockbench(vec)` / `gltfQuatToBBEuler(quat)` pair so it is the single
