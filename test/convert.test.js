@@ -63,3 +63,18 @@ test('sample: every cube has positive integer-ish size', () => {
     }
   }
 });
+
+// Calibration lock (Task 6): the neutral CONVENTION (×16, no flip, XYZ Euler) was confirmed
+// correct by visual check in Blockbench. Pin the head bone (via the head cube → its group,
+// robust to the duplicate 'head' parent group) so a convention change can't silently regress it.
+test('sample: head bone has expected calibrated transform', () => {
+  const buf = readFileSync(new URL('./fixtures/bacteria.gltf', import.meta.url));
+  const scene = readGltf(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength));
+  const m = convert(scene);
+  const headCube = m.cubes.find((c) => c.name === 'head');
+  assert.ok(headCube, 'head cube present');
+  const bone = m.groups[headCube.group];
+  closeArr(bone.origin, [0, 44, 0], 1e-2);
+  closeArr(bone.rotation, [5, -5, 10], 1e-2);
+  closeArr(headCube.to.map((v, i) => v - headCube.from[i]), [10, 4, 14], 1e-2);
+});
