@@ -100,18 +100,87 @@ function nodeTRS(n) {
   };
 }
 
+// PNG IHDR: width/height are big-endian uint32 at byte 16 and 20.
+function pngSize(arrayBuffer) {
+  const dv = new DataView(arrayBuffer);
+  return { width: dv.getUint32(16, false), height: dv.getUint32(20, false) };
+}
+
+function arrayBufferToDataUrl(arrayBuffer, mime) {
+  let binary = '';
+  const bytes = new Uint8Array(arrayBuffer);
+  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+  const b64 = (typeof btoa === 'function') ? btoa(binary) : Buffer.from(binary, 'binary').toString('base64');
+  return `data:${mime};base64,${b64}`;
+}
+
+function readTexture(json, buffers, opts) {
+  if (!json.images || !json.images.length) return null;
+  const img = json.images[0];
+  let ab, mime = img.mimeType || 'image/png';
+  if (img.uri && img.uri.startsWith('data:')) {
+    mime = img.uri.slice(5, img.uri.indexOf(';'));
+    ab = base64ToArrayBuffer(img.uri.slice(img.uri.indexOf(',') + 1));
+  } else if (img.bufferView != null) {
+    const view = json.bufferViews[img.bufferView];
+    ab = buffers[view.buffer].slice(view.byteOffset || 0, (view.byteOffset || 0) + view.byteLength);
+  } else if (img.uri && opts.externalLoader) {
+    ab = opts.externalLoader(img.uri);
+  } else {
+    return null;
+  }
+  const { width, height } = pngSize(ab);
+  const dataUrl = (img.uri && img.uri.startsWith('data:')) ? img.uri : arrayBufferToDataUrl(ab, mime);
+  return { name: (json.images[0].name) || 'texture', dataUrl, width, height };
+}
+
+// Group a 24-vertex box's faces using NORMAL; collect 4 corners + uvs per face.
+function readFaces(json, buffers, meshIndex) {
+  const prim = json.meshes[meshIndex].primitives[0];
+  if (prim.attributes.TEXCOORD_0 == null || prim.attributes.NORMAL == null) return [];
+  const pos = readAccessor(json, buffers, prim.attributes.POSITION).data;
+  const nor = readAccessor(json, buffers, prim.attributes.NORMAL).data;
+  const uv = readAccessor(json, buffers, prim.attributes.TEXCOORD_0).data;
+  const idx = prim.indices != null ? readAccessor(json, buffers, prim.indices).data : null;
+  const vertCount = pos.length / 3;
+  const order = idx || Array.from({ length: vertCount }, (_, i) => i);
+  // dominant axis of a normal → key
+  const faceKey = (n) => {
+    const ax = [Math.abs(n[0]), Math.abs(n[1]), Math.abs(n[2])];
+    const d = ax[0] >= ax[1] && ax[0] >= ax[2] ? 0 : (ax[1] >= ax[2] ? 1 : 2);
+    return `${d}:${Math.sign(n[d])}`;
+  };
+  const seen = new Map(); // key → {normal, verts:Set}
+  for (const vi of order) {
+    const n = [nor[vi * 3], nor[vi * 3 + 1], nor[vi * 3 + 2]];
+    const k = faceKey(n);
+    if (!seen.has(k)) seen.set(k, { normal: n, verts: new Set() });
+    seen.get(k).verts.add(vi);
+  }
+  const faces = [];
+  for (const { normal, verts } of seen.values()) {
+    const vs = [...verts].slice(0, 4);
+    faces.push({
+      normal,
+      corners: vs.map((vi) => [pos[vi * 3], pos[vi * 3 + 1], pos[vi * 3 + 2]]),
+      uvs: vs.map((vi) => [uv[vi * 2], uv[vi * 2 + 1]]),
+    });
+  }
+  return faces;
+}
+
 // Compute AABB of a mesh's first primitive POSITION accessor (uses min/max if present).
 function meshBox(json, buffers, meshIndex) {
   const prim = json.meshes[meshIndex].primitives[0];
   const posIdx = prim.attributes.POSITION;
   const acc = json.accessors[posIdx];
-  if (acc.min && acc.max) return { min: acc.min.slice(), max: acc.max.slice(), faces: [] };
+  if (acc.min && acc.max) return { min: acc.min.slice(), max: acc.max.slice(), faces: readFaces(json, buffers, meshIndex) };
   const { data } = readAccessor(json, buffers, posIdx);
   const min = [Infinity, Infinity, Infinity], max = [-Infinity, -Infinity, -Infinity];
   for (let i = 0; i < data.length; i += 3) {
     for (let c = 0; c < 3; c++) { min[c] = Math.min(min[c], data[i + c]); max[c] = Math.max(max[c], data[i + c]); }
   }
-  return { min, max, faces: [] };
+  return { min, max, faces: readFaces(json, buffers, meshIndex) };
 }
 
 function buildNode(json, buffers, idx) {
@@ -136,5 +205,5 @@ export function readGltf(arrayBuffer, opts = {}) {
   const buffers = resolveBuffers(json, bin, opts.externalLoader);
   const sceneDef = json.scenes[json.scene ?? 0];
   const roots = sceneDef.nodes.map((i) => buildNode(json, buffers, i));
-  return { roots, texture: null, animations: [], _json: json, _buffers: buffers };
+  return { roots, texture: readTexture(json, buffers, opts), animations: [], _json: json, _buffers: buffers };
 }
