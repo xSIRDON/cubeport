@@ -1,8 +1,9 @@
 // Blockbench plugin entry: registers an "Import glTF/glb" action that imports into the open project.
-/* global Plugin, Action, Blockbench, MenuBar, Project */
+/* global Plugin, Action, Blockbench, MenuBar, Project, Dialog */
 import { readGltf } from './gltf-reader.js';
 import { convert } from './convert.js';
 import { buildIntoProject } from './adapter.js';
+import { CONVENTION } from './convention.js';
 
 let action;
 
@@ -20,24 +21,19 @@ Plugin.register('gltf_importer', {
       icon: 'fa-cubes',
       click() {
         if (!Project) { Blockbench.showQuickMessage('Open or create a project first', 2000); return; }
-        Blockbench.import(
-          { extensions: ['gltf', 'glb'], type: 'glTF Model', readtype: 'binary' },
-          (files) => {
-            try {
-              const f = files[0];
-              const ab = f.content instanceof ArrayBuffer
-                ? f.content
-                : f.content.buffer.slice(f.content.byteOffset, f.content.byteOffset + f.content.byteLength);
-              const scene = readGltf(ab);
-              const model = convert(scene);
-              const res = buildIntoProject(model);
-              Blockbench.showQuickMessage(`Imported ${res.cubes.length} cubes`, 2000);
-            } catch (e) {
-              console.error(e);
-              Blockbench.showMessageBox({ title: 'glTF import failed', message: String(e && e.message || e) });
-            }
+
+        new Dialog('gltf_import_opts', {
+          title: 'Import glTF',
+          form: {
+            animations: { label: 'Import animations', type: 'checkbox', value: true },
+            scale: { label: 'Scale (px per unit)', type: 'number', value: CONVENTION.scale },
           },
-        );
+          onConfirm(opts) {
+            this.hide();
+            CONVENTION.scale = opts.scale;
+            runImport({ importAnimations: opts.animations });
+          },
+        }).show();
       },
     });
     MenuBar.addAction(action, 'file.import');
@@ -46,3 +42,25 @@ Plugin.register('gltf_importer', {
     if (action) action.delete();
   },
 });
+
+function runImport(opts) {
+  Blockbench.import(
+    { extensions: ['gltf', 'glb'], type: 'glTF Model', readtype: 'binary' },
+    (files) => {
+      try {
+        const f = files[0];
+        const ab = f.content instanceof ArrayBuffer
+          ? f.content
+          : f.content.buffer.slice(f.content.byteOffset, f.content.byteOffset + f.content.byteLength);
+        const scene = readGltf(ab);
+        const model = convert(scene);
+        const res = buildIntoProject(model, opts);
+        const skipMsg = model.skipped > 0 ? ` (${model.skipped} skipped)` : '';
+        Blockbench.showQuickMessage(`Imported ${res.cubes.length} cubes${skipMsg}`, 2000);
+      } catch (e) {
+        console.error(e);
+        Blockbench.showMessageBox({ title: 'glTF import failed', message: String(e && e.message || e) });
+      }
+    },
+  );
+}

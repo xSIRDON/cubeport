@@ -64,6 +64,7 @@ function convertAnimations(scene, indexToGroup, restRot, localTrans) {
 export function convert(scene) {
   const groups = [];
   const cubes = [];
+  let skipped = 0;
   const indexToGroup = {};
   const restRot = {};
   const localTrans = {};
@@ -96,12 +97,18 @@ export function convert(scene) {
       const hi = applyPos([accum[0] + node.box.max[0], accum[1] + node.box.max[1], accum[2] + node.box.max[2]]);
       const from = [Math.min(lo[0], hi[0]), Math.min(lo[1], hi[1]), Math.min(lo[2], hi[2])];
       const to = [Math.max(lo[0], hi[0]), Math.max(lo[1], hi[1]), Math.max(lo[2], hi[2])];
-      cubes.push({ name: node.name, from, to, origin, rotation: [0, 0, 0], group: groupIndex, faces: buildFaces(node.box, scene.texture) });
+      // Skip degenerate cubes (zero size on any axis)
+      const isDegenerate = (to[0] - from[0]) < 1e-6 || (to[1] - from[1]) < 1e-6 || (to[2] - from[2]) < 1e-6;
+      if (isDegenerate) {
+        skipped++;
+      } else {
+        cubes.push({ name: node.name, from, to, origin, rotation: [0, 0, 0], group: groupIndex, faces: buildFaces(node.box, scene.texture) });
+      }
     }
 
     for (const child of node.children) walk(child, accum, groupIndex);
   }
 
   for (const root of scene.roots) walk(root, [0, 0, 0], null);
-  return { groups, cubes, texture: scene.texture, animations: convertAnimations(scene, indexToGroup, restRot, localTrans) };
+  return { groups, cubes, skipped, texture: scene.texture, animations: convertAnimations(scene, indexToGroup, restRot, localTrans) };
 }

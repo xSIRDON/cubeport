@@ -19,7 +19,7 @@ function buildAnimations(model, bbGroups) {
   return made;
 }
 
-export function buildIntoProject(model) {
+export function buildIntoProject(model, options = {}) {
   Undo.initEdit({ elements: [], textures: [], outliner: true });
 
   // Texture first (so faces can reference it).
@@ -54,7 +54,7 @@ export function buildIntoProject(model) {
   }
 
   let animCount = 0;
-  if (model.animations && model.animations.length) {
+  if (options.importAnimations !== false && model.animations && model.animations.length) {
     if (typeof Format !== 'undefined' && Format && Format.animation_mode === false) {
       Blockbench.showQuickMessage('Imported geometry; this format has no animation support', 2500);
     } else {

@@ -127,6 +127,20 @@ test('animation: position keyframes are DELTA from rest local translation, scale
   assert.ok(Math.abs(track.position[1].value[0] - 16) < 1e-2, 'delta ~16');       // (2-1)*16
 });
 
+test('degenerate cube (zero size on one axis) is skipped and counted', () => {
+  const scene = {
+    roots: [
+      node({ name: 'flat', translation: [0, 0, 0], box: { min: [0, 0, 0], max: [0.0625, 0, 0.0625], faces: [] } }),
+      node({ name: 'ok',   translation: [0, 0, 0], box: { min: [0, 0, 0], max: [0.0625, 0.0625, 0.0625], faces: [] } }),
+    ],
+    texture: null, animations: [],
+  };
+  const m = convert(scene);
+  assert.equal(m.cubes.length, 1, 'only the non-degenerate cube included');
+  assert.equal(m.cubes[0].name, 'ok');
+  assert.equal(m.skipped, 1, 'skipped count is 1');
+});
+
 // Calibration lock (Task 6): the neutral CONVENTION (×16, no flip, XYZ Euler) was confirmed
 // correct by visual check in Blockbench. Pin the head bone (via the head cube → its group,
 // robust to the duplicate 'head' parent group) so a convention change can't silently regress it.

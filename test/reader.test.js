@@ -67,3 +67,24 @@ test('sample: reads 3 animations with per-node tracks', () => {
   // at least one rotation keyframe somewhere
   assert.ok(tracks.some((t) => t.rotation.length > 0));
 });
+
+test('glb: parses binary .glb file and returns a non-empty scene with boxed nodes', () => {
+  const buf = readFileSync(new URL('./fixtures/howler.glb', import.meta.url));
+  const ab = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
+  const scene = readGltf(ab);
+  assert.ok(scene.roots.length >= 1, 'has roots');
+  // Walk tree to find at least one node with a box (proves parseGlb + meshBox worked)
+  function findBox(nodes) {
+    for (const n of nodes) {
+      if (n.box) return n;
+      const found = findBox(n.children);
+      if (found) return found;
+    }
+    return null;
+  }
+  const boxed = findBox(scene.roots);
+  assert.ok(boxed, 'at least one node has a box');
+  // box has min/max arrays of length 3
+  assert.equal(boxed.box.min.length, 3);
+  assert.equal(boxed.box.max.length, 3);
+});
