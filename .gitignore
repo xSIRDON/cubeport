@@ -1,1 +1,6 @@
 node_modules/
+
+# Third-party sample models (Sketchfab downloads) used only for local integration tests.
+# Not redistributed. Place your own .gltf/.glb here to run the sample-based tests.
+test/fixtures/*.gltf
+test/fixtures/*.glb

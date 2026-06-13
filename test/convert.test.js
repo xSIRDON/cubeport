@@ -47,10 +47,14 @@ test('bone rotation is the node LOCAL rotation in degrees', () => {
   assert.ok(Math.abs(Math.abs(m.groups[0].rotation[1]) - 90) < 1e-2);
 });
 
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 import { readGltf } from '../src/gltf-reader.js';
 
-test('sample: every cube has positive integer-ish size', () => {
+// Sample model is a third-party Sketchfab asset, not committed. Skip when absent (fresh clone/CI).
+const GLTF = new URL('./fixtures/bacteria.gltf', import.meta.url);
+const skipGltf = existsSync(GLTF) ? false : 'sample model not present (third-party asset excluded from repo)';
+
+test('sample: every cube has positive integer-ish size', { skip: skipGltf }, () => {
   const buf = readFileSync(new URL('./fixtures/bacteria.gltf', import.meta.url));
   const scene = readGltf(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength));
   const m = convert(scene);
@@ -172,8 +176,8 @@ test('degenerate cube (zero size on one axis) is skipped and counted', () => {
 // Calibration lock (Task 6): the neutral CONVENTION (×16, no flip, XYZ Euler) was confirmed
 // correct by visual check in Blockbench. Pin the head bone (via the head cube → its group,
 // robust to the duplicate 'head' parent group) so a convention change can't silently regress it.
-test('sample: head bone has expected calibrated transform', () => {
-  const buf = readFileSync(new URL('./fixtures/bacteria.gltf', import.meta.url));
+test('sample: head bone has expected calibrated transform', { skip: skipGltf }, () => {
+  const buf = readFileSync(GLTF);
   const scene = readGltf(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength));
   const m = convert(scene);
   const headCube = m.cubes.find((c) => c.name === 'head');

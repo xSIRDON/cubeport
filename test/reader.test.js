@@ -1,16 +1,23 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 import { readGltf } from '../src/gltf-reader.js';
 
+// The sample model (bacteria.gltf / howler.glb) is a third-party Sketchfab asset and is NOT
+// committed to the repo. These integration tests run locally when you place the files in
+// test/fixtures/, and skip cleanly otherwise (e.g. in a fresh clone / CI).
+const GLTF = new URL('./fixtures/bacteria.gltf', import.meta.url);
+const GLB = new URL('./fixtures/howler.glb', import.meta.url);
+const skipGltf = existsSync(GLTF) ? false : 'sample model not present (third-party asset excluded from repo)';
+const skipGlb = existsSync(GLB) ? false : 'sample model not present (third-party asset excluded from repo)';
+
 function loadFixture() {
-  const buf = readFileSync(new URL('./fixtures/bacteria.gltf', import.meta.url));
+  const buf = readFileSync(GLTF);
   return readGltf(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength));
 }
 
-test('reads the sample scene graph', () => {
-  const scene = readGltf
-    ? loadFixture() : null;
+test('reads the sample scene graph', { skip: skipGltf }, () => {
+  const scene = loadFixture();
   assert.ok(scene.roots.length >= 1, 'has roots');
 });
 
@@ -20,12 +27,12 @@ function countNodes(nodes) {
   return n;
 }
 
-test('node count matches file (130 nodes)', () => {
+test('node count matches file (130 nodes)', { skip: skipGltf }, () => {
   const scene = loadFixture();
   assert.equal(countNodes(scene.roots), 130);
 });
 
-test('finds the head bone with a 24-vertex box and integer-ish size', () => {
+test('finds the head bone with a 24-vertex box and integer-ish size', { skip: skipGltf }, () => {
   const scene = loadFixture();
   let head = null;
   (function find(nodes) { for (const n of nodes) { if (n.name === 'head' && n.box) head = n; find(n.children); } })(scene.roots);
@@ -35,7 +42,7 @@ test('finds the head bone with a 24-vertex box and integer-ish size', () => {
   sizePx.forEach((v) => assert.ok(Math.abs(v - Math.round(v)) < 1e-2, `size ${v} ~ integer`));
 });
 
-test('sample: reads the embedded 64×64 texture', () => {
+test('sample: reads the embedded 64×64 texture', { skip: skipGltf }, () => {
   const scene = loadFixture();
   assert.ok(scene.texture, 'texture present');
   assert.ok(scene.texture.dataUrl.startsWith('data:image/png'), 'png data url');
@@ -43,7 +50,7 @@ test('sample: reads the embedded 64×64 texture', () => {
   assert.equal(scene.texture.height, 64);
 });
 
-test('sample: head box has 6 faces with uvs', () => {
+test('sample: head box has 6 faces with uvs', { skip: skipGltf }, () => {
   const scene = loadFixture();
   let head = null;
   (function find(nodes) { for (const n of nodes) { if (n.name === 'head' && n.box) head = n; find(n.children); } })(scene.roots);
@@ -54,7 +61,7 @@ test('sample: head box has 6 faces with uvs', () => {
   }
 });
 
-test('sample: reads 3 animations with per-node tracks', () => {
+test('sample: reads 3 animations with per-node tracks', { skip: skipGltf }, () => {
   const scene = loadFixture();
   assert.equal(scene.animations.length, 3);
   const idle = scene.animations.find((a) => a.name.includes('idle'));
@@ -79,8 +86,8 @@ test('reader: scene-less / nodeless glTF does not throw', () => {
   assert.deepEqual(scene2.roots, []);
 });
 
-test('glb: parses binary .glb file and returns a non-empty scene with boxed nodes', () => {
-  const buf = readFileSync(new URL('./fixtures/howler.glb', import.meta.url));
+test('glb: parses binary .glb file and returns a non-empty scene with boxed nodes', { skip: skipGlb }, () => {
+  const buf = readFileSync(GLB);
   const ab = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
   const scene = readGltf(ab);
   assert.ok(scene.roots.length >= 1, 'has roots');
