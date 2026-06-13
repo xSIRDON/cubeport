@@ -87,6 +87,10 @@
   var NUM_COMPONENTS = { SCALAR: 1, VEC2: 2, VEC3: 3, VEC4: 4, MAT4: 16 };
   function readAccessor(json, buffers, index) {
     const acc = json.accessors[index];
+    const ncompTop = NUM_COMPONENTS[acc.type];
+    if (acc.bufferView == null) {
+      return { data: new Array(acc.count * ncompTop).fill(0), count: acc.count, ncomp: ncompTop, min: acc.min, max: acc.max };
+    }
     const view = json.bufferViews[acc.bufferView];
     const buffer = buffers[view.buffer];
     const Ctor = COMPONENT[acc.componentType];
@@ -138,6 +142,9 @@
     };
   }
   function pngSize(arrayBuffer) {
+    const b = new Uint8Array(arrayBuffer);
+    const sig = [137, 80, 78, 71, 13, 10, 26, 10];
+    for (let i = 0; i < 8; i++) if (b[i] !== sig[i]) return null;
     const dv = new DataView(arrayBuffer);
     return { width: dv.getUint32(16, false), height: dv.getUint32(20, false) };
   }
@@ -163,9 +170,9 @@
     } else {
       return null;
     }
-    const { width, height } = pngSize(ab);
+    const size = pngSize(ab) || { width: null, height: null };
     const dataUrl = img.uri && img.uri.startsWith("data:") ? img.uri : arrayBufferToDataUrl(ab, mime);
-    return { name: json.images[0].name || "texture", dataUrl, width, height };
+    return { name: json.images[0].name || "texture", dataUrl, width: size.width, height: size.height };
   }
   function readFaces(json, buffers, meshIndex) {
     const prim = json.meshes[meshIndex].primitives[0];
@@ -258,8 +265,8 @@
     if (dv.getUint32(0, true) === GLB_MAGIC) ({ json, bin } = parseGlb(arrayBuffer));
     else json = JSON.parse(new TextDecoder().decode(new Uint8Array(arrayBuffer)));
     const buffers = resolveBuffers(json, bin, opts.externalLoader);
-    const sceneDef = json.scenes[json.scene ?? 0];
-    const roots = sceneDef.nodes.map((i) => buildNode(json, buffers, i));
+    const sceneDef = json.scenes && json.scenes[json.scene ?? 0] || { nodes: [] };
+    const roots = (sceneDef.nodes || []).map((i) => buildNode(json, buffers, i));
     return { roots, texture: readTexture(json, buffers, opts), animations: readAnimations(json, buffers), _json: json, _buffers: buffers };
   }
 
@@ -305,7 +312,7 @@
     };
   }
   function buildFaces(box, tex) {
-    if (!tex || !box.faces || !box.faces.length) return null;
+    if (!tex || !tex.width || !tex.height || !box.faces || !box.faces.length) return null;
     const out = {};
     for (const face of box.faces) out[bbFaceName(face.normal)] = faceToUv(face, tex);
     return out;
@@ -322,6 +329,20 @@
         for (const k of t.rotation) {
           const abs = quatToBBEuler(k.q);
           out.rotation.push({ t: k.t, value: [abs[0] - rRot[0], abs[1] - rRot[1], abs[2] - rRot[2]] });
+        }
+        out.rotation.sort((a, b) => a.t - b.t);
+        for (let comp = 0; comp < 3; comp++) {
+          for (let i = 1; i < out.rotation.length; i++) {
+            let d = out.rotation[i].value[comp] - out.rotation[i - 1].value[comp];
+            while (d > 180) {
+              out.rotation[i].value[comp] -= 360;
+              d -= 360;
+            }
+            while (d < -180) {
+              out.rotation[i].value[comp] += 360;
+              d += 360;
+            }
+          }
         }
         for (const k of t.position) {
           out.position.push({ t: k.t, value: applyPos([k.v[0] - lT[0], k.v[1] - lT[1], k.v[2] - lT[2]]) });
@@ -394,46 +415,56 @@
     return made;
   }
   function buildIntoProject(model, options = {}) {
+    const prev = { box_uv: Project.box_uv, tw: Project.texture_width, th: Project.texture_height };
     Undo.initEdit({ elements: [], textures: [], outliner: true });
-    let texture = null;
-    if (model.texture) {
-      texture = new Texture({ name: model.texture.name }).fromDataURL(model.texture.dataUrl).add(false);
-      if (model.texture.width) Project.texture_width = model.texture.width;
-      if (model.texture.height) Project.texture_height = model.texture.height;
-    }
-    if (model.cubes.some((c) => c.faces)) Project.box_uv = false;
-    const bbGroups = [];
-    model.groups.forEach((g, i) => {
-      const group = new Group({ name: g.name || `bone_${i}`, origin: g.origin, rotation: g.rotation });
-      group.addTo(g.parent != null ? bbGroups[g.parent] : void 0).init();
-      bbGroups[i] = group;
-    });
-    const cubes = [];
-    for (const c of model.cubes) {
-      const cube = new Cube({ name: c.name, from: c.from, to: c.to, origin: c.origin, rotation: c.rotation });
-      cube.addTo(bbGroups[c.group]).init();
-      if (c.faces && texture) {
-        for (const [name, face] of Object.entries(c.faces)) {
-          if (!cube.faces[name]) continue;
-          cube.faces[name].uv = face.uv;
-          cube.faces[name].rotation = face.rotation;
-          cube.faces[name].texture = texture.uuid;
+    try {
+      let texture = null;
+      if (model.texture) {
+        texture = new Texture({ name: model.texture.name }).fromDataURL(model.texture.dataUrl).add(false);
+        if (model.texture.width) Project.texture_width = model.texture.width;
+        if (model.texture.height) Project.texture_height = model.texture.height;
+      }
+      if (model.cubes.some((c) => c.faces)) Project.box_uv = false;
+      const bbGroups = [];
+      model.groups.forEach((g, i) => {
+        const group = new Group({ name: g.name || `bone_${i}`, origin: g.origin, rotation: g.rotation });
+        group.addTo(g.parent != null ? bbGroups[g.parent] : void 0).init();
+        bbGroups[i] = group;
+      });
+      const cubes = [];
+      for (const c of model.cubes) {
+        const cube = new Cube({ name: c.name, from: c.from, to: c.to, origin: c.origin, rotation: c.rotation });
+        cube.addTo(bbGroups[c.group]).init();
+        if (c.faces && texture) {
+          for (const [name, face] of Object.entries(c.faces)) {
+            if (!cube.faces[name]) continue;
+            cube.faces[name].uv = face.uv;
+            cube.faces[name].rotation = face.rotation;
+            cube.faces[name].texture = texture.uuid;
+          }
+        }
+        cubes.push(cube);
+      }
+      let animCount = 0;
+      if (options.importAnimations !== false && model.animations && model.animations.length) {
+        if (typeof Format !== "undefined" && Format && Format.animation_mode === false) {
+          Blockbench.showQuickMessage("Imported geometry; this format has no animation support", 2500);
+        } else {
+          animCount = buildAnimations(model, bbGroups);
         }
       }
-      cubes.push(cube);
+      Canvas.updateAll();
+      if (texture) Canvas.updateAllUVs && Canvas.updateAllUVs();
+      Undo.finishEdit("Import glTF", { elements: cubes, textures: texture ? [texture] : [], outliner: true });
+      return { groups: bbGroups, cubes, texture, animations: animCount };
+    } catch (e) {
+      Project.box_uv = prev.box_uv;
+      Project.texture_width = prev.tw;
+      Project.texture_height = prev.th;
+      if (typeof Undo.cancelEdit === "function") Undo.cancelEdit();
+      else Undo.finishEdit("Import glTF (failed)");
+      throw e;
     }
-    let animCount = 0;
-    if (options.importAnimations !== false && model.animations && model.animations.length) {
-      if (typeof Format !== "undefined" && Format && Format.animation_mode === false) {
-        Blockbench.showQuickMessage("Imported geometry; this format has no animation support", 2500);
-      } else {
-        animCount = buildAnimations(model, bbGroups);
-      }
-    }
-    Canvas.updateAll();
-    if (texture) Canvas.updateAllUVs && Canvas.updateAllUVs();
-    Undo.finishEdit("Import glTF", { elements: cubes, textures: texture ? [texture] : [], outliner: true });
-    return { groups: bbGroups, cubes, texture, animations: animCount };
   }
 
   // src/entry.js

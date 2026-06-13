@@ -22,7 +22,7 @@ function faceToUv(face, tex) {
 }
 
 export function buildFaces(box, tex) {
-  if (!tex || !box.faces || !box.faces.length) return null;
+  if (!tex || !tex.width || !tex.height || !box.faces || !box.faces.length) return null;
   const out = {};
   for (const face of box.faces) out[bbFaceName(face.normal)] = faceToUv(face, tex);
   return out;
@@ -48,6 +48,16 @@ function convertAnimations(scene, indexToGroup, restRot, localTrans) {
       for (const k of t.rotation) {
         const abs = quatToBBEuler(k.q);
         out.rotation.push({ t: k.t, value: [abs[0] - rRot[0], abs[1] - rRot[1], abs[2] - rRot[2]] });
+      }
+      out.rotation.sort((a, b) => a.t - b.t);
+      // Unwrap each euler component so consecutive keyframes take the short rotational path.
+      // Adding ±360 to a keyframe leaves its orientation identical but avoids long-way interpolation.
+      for (let comp = 0; comp < 3; comp++) {
+        for (let i = 1; i < out.rotation.length; i++) {
+          let d = out.rotation[i].value[comp] - out.rotation[i - 1].value[comp];
+          while (d > 180) { out.rotation[i].value[comp] -= 360; d -= 360; }
+          while (d < -180) { out.rotation[i].value[comp] += 360; d += 360; }
+        }
       }
       for (const k of t.position) {
         // delta from the node's rest local translation, then to BB units (applyPos is linear)

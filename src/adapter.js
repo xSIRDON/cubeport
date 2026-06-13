@@ -20,8 +20,9 @@ function buildAnimations(model, bbGroups) {
 }
 
 export function buildIntoProject(model, options = {}) {
+  const prev = { box_uv: Project.box_uv, tw: Project.texture_width, th: Project.texture_height };
   Undo.initEdit({ elements: [], textures: [], outliner: true });
-
+  try {
   // Texture first (so faces can reference it).
   let texture = null;
   if (model.texture) {
@@ -66,4 +67,11 @@ export function buildIntoProject(model, options = {}) {
   if (texture) Canvas.updateAllUVs && Canvas.updateAllUVs();
   Undo.finishEdit('Import glTF', { elements: cubes, textures: texture ? [texture] : [], outliner: true });
   return { groups: bbGroups, cubes, texture, animations: animCount };
+  } catch (e) {
+    Project.box_uv = prev.box_uv;
+    Project.texture_width = prev.tw;
+    Project.texture_height = prev.th;
+    if (typeof Undo.cancelEdit === 'function') Undo.cancelEdit(); else Undo.finishEdit('Import glTF (failed)');
+    throw e;
+  }
 }

@@ -127,6 +127,34 @@ test('animation: position keyframes are DELTA from rest local translation, scale
   assert.ok(Math.abs(track.position[1].value[0] - 16) < 1e-2, 'delta ~16');       // (2-1)*16
 });
 
+test('texture with unknown dimensions => faces skipped (no UV corruption)', () => {
+  const scene = {
+    roots: [node({ name: 'c', box: { min: [0,0,0], max: [0.0625,0.0625,0.0625],
+      faces: [{ normal:[0,0,1], corners:[[0,0,0],[0,0,0],[0,0,0],[0,0,0]], uvs:[[0,0],[1,0],[1,1],[0,1]] }] } })],
+    texture: { name:'t', dataUrl:'data:', width: null, height: null }, animations: [],
+  };
+  const m = convert(scene);
+  assert.equal(m.cubes[0].faces, null);
+});
+
+test('animation: rotation deltas are unwrapped to the short path', () => {
+  // Rotate about +Z: under XYZ-euler decomposition the Z component carries the full angle
+  // (a pure +Y rotation >90° folds into X=Z=±180, Y≈±10 and would not exercise the unwrap).
+  const quatZ = (deg) => { const h = (deg * Math.PI) / 360; return [0, 0, Math.sin(h), Math.cos(h)]; };
+  const scene = {
+    roots: [node({ name: 'b', gltfIndex: 1, box: { min:[0,0,0], max:[0.0625,0.0625,0.0625], faces: [] } })],
+    texture: null,
+    animations: [{ name: 'a', length: 1,
+      tracks: { 1: { rotation: [{ t: 0, q: quatZ(170) }, { t: 1, q: quatZ(190) }], position: [], scale: [] } } }],
+  };
+  const m = convert(scene);
+  const gi = m.groups.findIndex((g) => g.name === 'b');
+  const rot = m.animations[0].tracks[gi].rotation;
+  // key0 ~170°, key1 absolute is -170°≡190°; unwrapped it should be ~190 (step +20), not ~-170 (step -340)
+  assert.ok(Math.abs(rot[0].value[2] - 170) < 1e-1, `k0 ${rot[0].value[2]}`);
+  assert.ok(Math.abs(rot[1].value[2] - 190) < 1e-1, `k1 ${rot[1].value[2]}`);
+});
+
 test('degenerate cube (zero size on one axis) is skipped and counted', () => {
   const scene = {
     roots: [

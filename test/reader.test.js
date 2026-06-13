@@ -68,6 +68,17 @@ test('sample: reads 3 animations with per-node tracks', () => {
   assert.ok(tracks.some((t) => t.rotation.length > 0));
 });
 
+function gltfBufferFrom(obj) {
+  const bytes = new TextEncoder().encode(JSON.stringify(obj));
+  return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+}
+test('reader: scene-less / nodeless glTF does not throw', () => {
+  const scene = readGltf(gltfBufferFrom({ asset: { version: '2.0' }, nodes: [] }));
+  assert.deepEqual(scene.roots, []);
+  const scene2 = readGltf(gltfBufferFrom({ asset: { version: '2.0' }, scenes: [{}], scene: 0 }));
+  assert.deepEqual(scene2.roots, []);
+});
+
 test('glb: parses binary .glb file and returns a non-empty scene with boxed nodes', () => {
   const buf = readFileSync(new URL('./fixtures/howler.glb', import.meta.url));
   const ab = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);

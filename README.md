@@ -21,6 +21,9 @@ cube each (the mesh geometry is approximated by its axis-aligned bounding box).
 - Expects box geometry (Minecraft-style). Non-box meshes import as bounding-box cubes.
 - One base color texture; no PBR/skinning/morph targets.
 - Animations are sampled keyframes (dense, not original sparse keys).
+- Only the first primitive of each mesh is imported (multi-primitive meshes lose extra primitives).
+- Per-face UV rotation/mirroring is not auto-detected; mirror-modeled faces may show the texture un-mirrored.
+- Single-keyframe animations may have zero length.
 
 ## Develop
 - `npm test` — runs the pure-core test suite (`node --test`).
