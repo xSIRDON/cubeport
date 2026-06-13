@@ -48,7 +48,7 @@ glTFConverter/
 // ParsedScene = { roots:ParsedNode[], texture:ParsedTexture|null, animations:ParsedAnimation[] }
 // ParsedTexture   = { name:string, dataUrl:string, width:number, height:number }   // Phase 2
 // ParsedAnimation = { name:string, length:number,                                  // Phase 3
-//                     tracks: { [nodeName]: { rotation:[{t,q:[x,y,z,w]}], position:[{t,v:[x,y,z]}],
+//                     tracks: { [nodeIndex]: { rotation:[{t,q:[x,y,z,w]}], position:[{t,v:[x,y,z]}],
 //                                             scale:[{t,v:[x,y,z]}] } } }
 
 // IntermediateModel (produced by convert, consumed by adapter) — all values BLOCKBENCH units/degrees
@@ -1150,7 +1150,7 @@ git commit -m "feat: apply texture and per-face UVs on import"
 - [ ] **Step 1: Write the failing test (append to `test/reader.test.js`)**
 
 ```js
-test('sample: reads 3 animations with named tracks', () => {
+test('sample: reads 3 animations with per-node tracks', () => {
   const scene = loadFixture();
   assert.equal(scene.animations.length, 3);
   const idle = scene.animations.find((a) => a.name.includes('idle'));
@@ -1158,6 +1158,8 @@ test('sample: reads 3 animations with named tracks', () => {
   assert.ok(idle.length > 0, 'has length');
   const tracks = Object.values(idle.tracks);
   assert.ok(tracks.length > 0, 'has bone tracks');
+  // track keys are glTF node indices (numeric strings), not names
+  assert.ok(Object.keys(idle.tracks).every((k) => String(Number(k)) === k));
   // at least one rotation keyframe somewhere
   assert.ok(tracks.some((t) => t.rotation.length > 0));
 });
@@ -1168,12 +1170,18 @@ test('sample: reads 3 animations with named tracks', () => {
 Run: `node --test test/reader.test.js`
 Expected: FAIL — `scene.animations` empty.
 
-- [ ] **Step 3: Add animation decoding to `src/gltf-reader.js`**
+- [ ] **Step 3: Record node index + add animation decoding to `src/gltf-reader.js`**
 
+First, record each node's glTF index so animations can target bones unambiguously. **Names are NOT unique** in this model (many nodes named `cube`, two named `head`), so animation tracks must key by node index, and `convert` must be able to correlate a `ParsedNode` back to its glTF index. In `buildNode`, add `gltfIndex: idx` to the returned object:
+```js
+// in buildNode(...)'s returned object, add this property:
+//   gltfIndex: idx,
+```
+
+Then add animation decoding, keying tracks by the target node's **index** (not name):
 ```js
 function readAnimations(json, buffers) {
   if (!json.animations) return [];
-  const nodeName = (i) => (json.nodes[i] && json.nodes[i].name) || `node_${i}`;
   return json.animations.map((anim, ai) => {
     const tracks = {};
     let length = 0;
@@ -1181,17 +1189,17 @@ function readAnimations(json, buffers) {
       const sampler = anim.samplers[ch.sampler];
       const times = readAccessor(json, buffers, sampler.input).data;
       const values = readAccessor(json, buffers, sampler.output);
-      const name = nodeName(ch.target.node);
-      const path = ch.target.path; // 'rotation' | 'translation' | 'scale'
-      if (!tracks[name]) tracks[name] = { rotation: [], position: [], scale: [] };
+      const nodeIndex = ch.target.node;          // unique, stable key
+      const path = ch.target.path;               // 'rotation' | 'translation' | 'scale'
+      if (!tracks[nodeIndex]) tracks[nodeIndex] = { rotation: [], position: [], scale: [] };
       const n = values.ncomp;
       for (let k = 0; k < times.length; k++) {
         const t = times[k];
         length = Math.max(length, t);
         const v = values.data.slice(k * n, k * n + n);
-        if (path === 'rotation') tracks[name].rotation.push({ t, q: v });
-        else if (path === 'translation') tracks[name].position.push({ t, v });
-        else if (path === 'scale') tracks[name].scale.push({ t, v });
+        if (path === 'rotation') tracks[nodeIndex].rotation.push({ t, q: v });
+        else if (path === 'translation') tracks[nodeIndex].position.push({ t, v });
+        else if (path === 'scale') tracks[nodeIndex].scale.push({ t, v });
       }
     }
     return { name: anim.name || `animation_${ai}`, length, tracks };
@@ -1216,7 +1224,10 @@ git commit -m "feat: reader decodes glTF animation tracks"
 
 ## Task 11: Convert — animations to Blockbench keyframes (Phase 3)
 
-Convert per-node TRS keyframes into `IMAnimation` tracks keyed by group index, with rotations as Euler degrees and positions in BB units. Positions/scales are emitted as **deltas from the rest pose** (Blockbench animator convention: keyframes are offsets from the bone's rest transform).
+Convert per-node TRS keyframes into `IMAnimation` tracks keyed by group index. Blockbench applies animation keyframes **additively on top of the bone's rest transform** (verified in the Blockbench source: `displayRotation` does `mesh.rotation.copy(fix_rotation)` then `mesh.rotation.x += degToRad(value.x)`, and `displayPosition` does `mesh.position.copy(fix_position)` then `mesh.position.x += value.x`). Therefore **every channel must be emitted as a delta from the bone's rest LOCAL transform**:
+- **rotation** value (degrees) = `quatToBBEuler(animQuat)` − `restRotationEuler` (component-wise; rest euler = the bone's `group.rotation`).
+- **position** value (px) = `applyPos(animLocalTranslation − nodeLocalTranslation)` (delta from the node's own local translation, NOT the accumulated origin).
+- **scale** value = absolute factor (rest scale is 1; `displayScale` multiplies, so absolute is correct). No scale channels in the sample, but handle them.
 
 **Files:**
 - Modify: `src/convert.js`
@@ -1225,14 +1236,17 @@ Convert per-node TRS keyframes into `IMAnimation` tracks keyed by group index, w
 - [ ] **Step 1: Write the failing test (append to `test/convert.test.js`)**
 
 ```js
-test('animation: rotation keys become euler-degree keyframes on the right group', () => {
-  const s = Math.sin(Math.PI / 4); // 90° about Y at t=0.5
+// quaternion for `deg` degrees about +Y
+const quatY = (degrees) => { const h = (degrees * Math.PI) / 360; return [0, Math.sin(h), 0, Math.cos(h)]; };
+
+test('animation: rotation keyframes are DELTA from the bone rest rotation, in degrees', () => {
+  // rest = 30° about Y; anim goes 30°→90°. Tracks keyed by glTF node index; node carries gltfIndex.
   const scene = {
-    roots: [node({ name: 'bone', box: { min: [0, 0, 0], max: [0.0625, 0.0625, 0.0625], faces: [] } })],
+    roots: [node({ name: 'bone', gltfIndex: 7, rotation: quatY(30), box: { min: [0, 0, 0], max: [0.0625, 0.0625, 0.0625], faces: [] } })],
     texture: null,
     animations: [{
       name: 'test', length: 0.5,
-      tracks: { bone: { rotation: [{ t: 0, q: [0, 0, 0, 1] }, { t: 0.5, q: [0, s, 0, s] }], position: [], scale: [] } },
+      tracks: { 7: { rotation: [{ t: 0, q: quatY(30) }, { t: 0.5, q: quatY(90) }], position: [], scale: [] } },
     }],
   };
   const m = convert(scene);
@@ -1241,8 +1255,24 @@ test('animation: rotation keys become euler-degree keyframes on the right group'
   const track = m.animations[0].tracks[groupIndex];
   assert.ok(track, 'track for bone group');
   assert.equal(track.rotation.length, 2);
-  assert.equal(track.rotation[0].t, 0);
-  assert.ok(Math.abs(Math.abs(track.rotation[1].value[1]) - 90) < 1e-2);
+  assert.ok(Math.abs(track.rotation[0].value[1]) < 1e-2, 'delta ~0 at rest');     // 30 - 30
+  assert.ok(Math.abs(track.rotation[1].value[1] - 60) < 1e-2, 'delta ~60');       // 90 - 30
+});
+
+test('animation: position keyframes are DELTA from rest local translation, scaled ×16', () => {
+  const scene = {
+    roots: [node({ name: 'b', gltfIndex: 3, translation: [1, 0, 0], box: { min: [0, 0, 0], max: [0.0625, 0.0625, 0.0625], faces: [] } })],
+    texture: null,
+    animations: [{
+      name: 't', length: 1,
+      tracks: { 3: { rotation: [], position: [{ t: 0, v: [1, 0, 0] }, { t: 1, v: [2, 0, 0] }], scale: [] } },
+    }],
+  };
+  const m = convert(scene);
+  const gi = m.groups.findIndex((g) => g.name === 'b');
+  const track = m.animations[0].tracks[gi];
+  assert.ok(Math.abs(track.position[0].value[0]) < 1e-2, 'delta ~0 at rest');     // (1-1)*16
+  assert.ok(Math.abs(track.position[1].value[0] - 16) < 1e-2, 'delta ~16');       // (2-1)*16
 });
 ```
 
@@ -1255,20 +1285,29 @@ Expected: FAIL — `m.animations` is `[]`.
 
 ```js
 // Reuses applyPos / quatToBBEuler already imported at the top of convert.js (Task 4).
-// Converts animation tracks after groups/cubes exist (needs nameToIndex + restAccum from the walk).
-function convertAnimations(scene, nameToIndex, restAccum) {
+// Animation tracks are keyed by glTF node index (names are NOT unique). Three maps, all keyed
+// by node index, are built during the walk:
+//   indexToGroup[idx]  → the IM group index for that node
+//   restRot[idx]       → the bone's rest rotation euler (= group.rotation we computed)
+//   localTrans[idx]    → the node's OWN local translation (raw glTF units)
+// Keyframes are deltas from rest because Blockbench adds them onto fix_rotation/fix_position.
+// Object.entries keys are strings; the maps were set with numeric keys, so string lookup matches.
+function convertAnimations(scene, indexToGroup, restRot, localTrans) {
   return scene.animations.map((anim) => {
     const tracks = {};
-    for (const [nodeName, t] of Object.entries(anim.tracks)) {
-      const gi = nameToIndex[nodeName];
+    for (const [nodeIndex, t] of Object.entries(anim.tracks)) {
+      const gi = indexToGroup[nodeIndex];
       if (gi == null) continue;
+      const rRot = restRot[nodeIndex] || [0, 0, 0];
+      const lT = localTrans[nodeIndex] || [0, 0, 0];
       const out = { rotation: [], position: [], scale: [] };
-      for (const k of t.rotation) out.rotation.push({ t: k.t, value: quatToBBEuler(k.q) });
-      const rest = restAccum[nodeName] || [0, 0, 0];
-      const restPx = applyPos(rest);
+      for (const k of t.rotation) {
+        const abs = quatToBBEuler(k.q);
+        out.rotation.push({ t: k.t, value: [abs[0] - rRot[0], abs[1] - rRot[1], abs[2] - rRot[2]] });
+      }
       for (const k of t.position) {
-        const px = applyPos([rest[0] + k.v[0], rest[1] + k.v[1], rest[2] + k.v[2]]);
-        out.position.push({ t: k.t, value: [px[0] - restPx[0], px[1] - restPx[1], px[2] - restPx[2]] });
+        // delta from the node's rest local translation, then to BB units (applyPos is linear)
+        out.position.push({ t: k.t, value: applyPos([k.v[0] - lT[0], k.v[1] - lT[1], k.v[2] - lT[2]]) });
       }
       for (const k of t.scale) out.scale.push({ t: k.t, value: [k.v[0], k.v[1], k.v[2]] });
       tracks[gi] = out;
@@ -1280,13 +1319,18 @@ function convertAnimations(scene, nameToIndex, restAccum) {
 Modify `convert` to record the maps during the walk and call `convertAnimations`:
 ```js
 // At top of convert(): add
-//   const nameToIndex = {};
-//   const restAccum = {};
-// Inside walk(), right after computing `accum` and `groupIndex`/push:
-//   nameToIndex[node.name] = groupIndex;
-//   restAccum[node.name] = accum;
+//   const indexToGroup = {};
+//   const restRot = {};
+//   const localTrans = {};
+// Inside walk(), right after pushing the group (groupIndex computed; the pushed group's
+// rotation is `groups[groupIndex].rotation`):
+//   if (node.gltfIndex != null) {
+//     indexToGroup[node.gltfIndex] = groupIndex;
+//     restRot[node.gltfIndex] = groups[groupIndex].rotation;
+//     localTrans[node.gltfIndex] = node.translation;
+//   }
 // At the end, replace `animations: []` with:
-//   animations: convertAnimations(scene, nameToIndex, restAccum),
+//   animations: convertAnimations(scene, indexToGroup, restRot, localTrans),
 ```
 
 - [ ] **Step 4: Run to verify pass**
@@ -1311,24 +1355,39 @@ git commit -m "feat: convert glTF animations to Blockbench keyframe tracks"
 
 - [ ] **Step 1: Add animation creation to `src/adapter.js`**
 
-After cubes are created (and before/after `Canvas.updateAll()`), add:
+Add this helper near the top of `src/adapter.js` (extend the `/* global ... */` line to include `Animation`, `Format`, `Blockbench`):
 ```js
-/* global Animation */
+// createKeyframe(value, time, channel, undo, select) — pass undo=false (we wrap the whole
+// import in one Undo) and select=false (don't select hundreds of keyframes).
 function buildAnimations(model, bbGroups) {
+  let made = 0;
   for (const a of model.animations) {
     const anim = new Animation({ name: a.name, loop: a.loop, length: a.length }).add(false);
     for (const [gi, track] of Object.entries(a.tracks)) {
       const group = bbGroups[Number(gi)];
       if (!group) continue;
       const animator = anim.getBoneAnimator(group);
-      for (const k of track.rotation) animator.createKeyframe({ x: k.value[0], y: k.value[1], z: k.value[2] }, k.t, 'rotation', false);
-      for (const k of track.position) animator.createKeyframe({ x: k.value[0], y: k.value[1], z: k.value[2] }, k.t, 'position', false);
-      for (const k of track.scale)    animator.createKeyframe({ x: k.value[0], y: k.value[1], z: k.value[2] }, k.t, 'scale', false);
+      for (const k of track.rotation) animator.createKeyframe({ x: k.value[0], y: k.value[1], z: k.value[2] }, k.t, 'rotation', false, false);
+      for (const k of track.position) animator.createKeyframe({ x: k.value[0], y: k.value[1], z: k.value[2] }, k.t, 'position', false, false);
+      for (const k of track.scale)    animator.createKeyframe({ x: k.value[0], y: k.value[1], z: k.value[2] }, k.t, 'scale', false, false);
     }
+    made++;
   }
+  return made;
 }
 ```
-Call `buildAnimations(model, bbGroups);` inside `buildIntoProject` (after cubes, before `Undo.finishEdit`). Guard the format: only run if `Format.animation_mode` (most entity formats) — otherwise skip with a quick message.
+Then in `buildIntoProject`, after the cubes loop and before `Undo.finishEdit`, add (guarding formats that don't support animation):
+```js
+  let animCount = 0;
+  if (model.animations && model.animations.length) {
+    if (typeof Format !== 'undefined' && Format && Format.animation_mode === false) {
+      Blockbench.showQuickMessage('Imported geometry; this format has no animation support', 2500);
+    } else {
+      animCount = buildAnimations(model, bbGroups);
+    }
+  }
+```
+and include `animations: animCount` in the returned object so `entry.js` can report it.
 
 - [ ] **Step 2: Build + manual test**
 
