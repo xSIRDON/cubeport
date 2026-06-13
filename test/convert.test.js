@@ -88,6 +88,45 @@ test('face UVs map to pixel rect within texture bounds', () => {
   closeArr([f.uv[1], f.uv[3]].sort((a, b) => a - b), [0, 16]);
 });
 
+// quaternion for `deg` degrees about +Y
+const quatY = (degrees) => { const h = (degrees * Math.PI) / 360; return [0, Math.sin(h), 0, Math.cos(h)]; };
+
+test('animation: rotation keyframes are DELTA from the bone rest rotation, in degrees', () => {
+  // rest = 30° about Y; anim goes 30°→90°. Tracks keyed by glTF node index; node carries gltfIndex.
+  const scene = {
+    roots: [node({ name: 'bone', gltfIndex: 7, rotation: quatY(30), box: { min: [0, 0, 0], max: [0.0625, 0.0625, 0.0625], faces: [] } })],
+    texture: null,
+    animations: [{
+      name: 'test', length: 0.5,
+      tracks: { 7: { rotation: [{ t: 0, q: quatY(30) }, { t: 0.5, q: quatY(90) }], position: [], scale: [] } },
+    }],
+  };
+  const m = convert(scene);
+  assert.equal(m.animations.length, 1);
+  const groupIndex = m.groups.findIndex((g) => g.name === 'bone');
+  const track = m.animations[0].tracks[groupIndex];
+  assert.ok(track, 'track for bone group');
+  assert.equal(track.rotation.length, 2);
+  assert.ok(Math.abs(track.rotation[0].value[1]) < 1e-2, 'delta ~0 at rest');     // 30 - 30
+  assert.ok(Math.abs(track.rotation[1].value[1] - 60) < 1e-2, 'delta ~60');       // 90 - 30
+});
+
+test('animation: position keyframes are DELTA from rest local translation, scaled ×16', () => {
+  const scene = {
+    roots: [node({ name: 'b', gltfIndex: 3, translation: [1, 0, 0], box: { min: [0, 0, 0], max: [0.0625, 0.0625, 0.0625], faces: [] } })],
+    texture: null,
+    animations: [{
+      name: 't', length: 1,
+      tracks: { 3: { rotation: [], position: [{ t: 0, v: [1, 0, 0] }, { t: 1, v: [2, 0, 0] }], scale: [] } },
+    }],
+  };
+  const m = convert(scene);
+  const gi = m.groups.findIndex((g) => g.name === 'b');
+  const track = m.animations[0].tracks[gi];
+  assert.ok(Math.abs(track.position[0].value[0]) < 1e-2, 'delta ~0 at rest');     // (1-1)*16
+  assert.ok(Math.abs(track.position[1].value[0] - 16) < 1e-2, 'delta ~16');       // (2-1)*16
+});
+
 // Calibration lock (Task 6): the neutral CONVENTION (×16, no flip, XYZ Euler) was confirmed
 // correct by visual check in Blockbench. Pin the head bone (via the head cube → its group,
 // robust to the duplicate 'head' parent group) so a convention change can't silently regress it.

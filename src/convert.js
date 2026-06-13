@@ -28,10 +28,45 @@ export function buildFaces(box, tex) {
   return out;
 }
 
+// Reuses applyPos / quatToBBEuler already imported at the top of convert.js (Task 4).
+// Animation tracks are keyed by glTF node index (names are NOT unique). Three maps, all keyed
+// by node index, are built during the walk:
+//   indexToGroup[idx]  → the IM group index for that node
+//   restRot[idx]       → the bone's rest rotation euler (= group.rotation we computed)
+//   localTrans[idx]    → the node's OWN local translation (raw glTF units)
+// Keyframes are deltas from rest because Blockbench adds them onto fix_rotation/fix_position.
+// Object.entries keys are strings; the maps were set with numeric keys, so string lookup matches.
+function convertAnimations(scene, indexToGroup, restRot, localTrans) {
+  return scene.animations.map((anim) => {
+    const tracks = {};
+    for (const [nodeIndex, t] of Object.entries(anim.tracks)) {
+      const gi = indexToGroup[nodeIndex];
+      if (gi == null) continue;
+      const rRot = restRot[nodeIndex] || [0, 0, 0];
+      const lT = localTrans[nodeIndex] || [0, 0, 0];
+      const out = { rotation: [], position: [], scale: [] };
+      for (const k of t.rotation) {
+        const abs = quatToBBEuler(k.q);
+        out.rotation.push({ t: k.t, value: [abs[0] - rRot[0], abs[1] - rRot[1], abs[2] - rRot[2]] });
+      }
+      for (const k of t.position) {
+        // delta from the node's rest local translation, then to BB units (applyPos is linear)
+        out.position.push({ t: k.t, value: applyPos([k.v[0] - lT[0], k.v[1] - lT[1], k.v[2] - lT[2]]) });
+      }
+      for (const k of t.scale) out.scale.push({ t: k.t, value: [k.v[0], k.v[1], k.v[2]] });
+      tracks[gi] = out;
+    }
+    return { name: anim.name, length: anim.length, loop: 'loop', tracks };
+  });
+}
+
 // ParsedScene → IMModel (groups + cubes). Phase 1: geometry only.
 export function convert(scene) {
   const groups = [];
   const cubes = [];
+  const indexToGroup = {};
+  const restRot = {};
+  const localTrans = {};
 
   // walk: parentAccum = translation-only accumulated origin (raw glTF units), parentIndex
   function walk(node, parentAccum, parentIndex) {
@@ -49,6 +84,12 @@ export function convert(scene) {
       parent: parentIndex,
     });
 
+    if (node.gltfIndex != null) {
+      indexToGroup[node.gltfIndex] = groupIndex;
+      restRot[node.gltfIndex] = groups[groupIndex].rotation;
+      localTrans[node.gltfIndex] = node.translation;
+    }
+
     if (node.box) {
       // from/to = (accum + boxCorner) × 16, axis-aligned (translation-only space)
       const lo = applyPos([accum[0] + node.box.min[0], accum[1] + node.box.min[1], accum[2] + node.box.min[2]]);
@@ -62,5 +103,5 @@ export function convert(scene) {
   }
 
   for (const root of scene.roots) walk(root, [0, 0, 0], null);
-  return { groups, cubes, texture: scene.texture, animations: [] };
+  return { groups, cubes, texture: scene.texture, animations: convertAnimations(scene, indexToGroup, restRot, localTrans) };
 }
