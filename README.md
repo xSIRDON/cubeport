@@ -1,5 +1,9 @@
 # Cubeport
 
+> 🟩 **Completely vibe-coded for a community in need.** Cubeport was built end-to-end with
+> AI assistance (Claude) to fill a real gap for Minecraft modelers — bringing glTF models
+> back in as editable cubes instead of dead meshes.
+
 **Import glTF/glb models into Blockbench as editable cubes** — real box elements with
 correct position, size, pivot, and rotation, organized into bones, with textures and
 animations brought across too.
