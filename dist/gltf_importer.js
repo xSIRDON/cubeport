@@ -137,11 +137,73 @@
       scale: n.scale || [1, 1, 1]
     };
   }
+  function pngSize(arrayBuffer) {
+    const dv = new DataView(arrayBuffer);
+    return { width: dv.getUint32(16, false), height: dv.getUint32(20, false) };
+  }
+  function arrayBufferToDataUrl(arrayBuffer, mime) {
+    let binary = "";
+    const bytes = new Uint8Array(arrayBuffer);
+    for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+    const b64 = typeof btoa === "function" ? btoa(binary) : Buffer.from(binary, "binary").toString("base64");
+    return `data:${mime};base64,${b64}`;
+  }
+  function readTexture(json, buffers, opts) {
+    if (!json.images || !json.images.length) return null;
+    const img = json.images[0];
+    let ab, mime = img.mimeType || "image/png";
+    if (img.uri && img.uri.startsWith("data:")) {
+      mime = img.uri.slice(5, img.uri.indexOf(";"));
+      ab = base64ToArrayBuffer(img.uri.slice(img.uri.indexOf(",") + 1));
+    } else if (img.bufferView != null) {
+      const view = json.bufferViews[img.bufferView];
+      ab = buffers[view.buffer].slice(view.byteOffset || 0, (view.byteOffset || 0) + view.byteLength);
+    } else if (img.uri && opts.externalLoader) {
+      ab = opts.externalLoader(img.uri);
+    } else {
+      return null;
+    }
+    const { width, height } = pngSize(ab);
+    const dataUrl = img.uri && img.uri.startsWith("data:") ? img.uri : arrayBufferToDataUrl(ab, mime);
+    return { name: json.images[0].name || "texture", dataUrl, width, height };
+  }
+  function readFaces(json, buffers, meshIndex) {
+    const prim = json.meshes[meshIndex].primitives[0];
+    if (prim.attributes.TEXCOORD_0 == null || prim.attributes.NORMAL == null) return [];
+    const pos = readAccessor(json, buffers, prim.attributes.POSITION).data;
+    const nor = readAccessor(json, buffers, prim.attributes.NORMAL).data;
+    const uv = readAccessor(json, buffers, prim.attributes.TEXCOORD_0).data;
+    const idx = prim.indices != null ? readAccessor(json, buffers, prim.indices).data : null;
+    const vertCount = pos.length / 3;
+    const order = idx || Array.from({ length: vertCount }, (_, i) => i);
+    const faceKey = (n) => {
+      const ax = [Math.abs(n[0]), Math.abs(n[1]), Math.abs(n[2])];
+      const d = ax[0] >= ax[1] && ax[0] >= ax[2] ? 0 : ax[1] >= ax[2] ? 1 : 2;
+      return `${d}:${Math.sign(n[d])}`;
+    };
+    const seen = /* @__PURE__ */ new Map();
+    for (const vi of order) {
+      const n = [nor[vi * 3], nor[vi * 3 + 1], nor[vi * 3 + 2]];
+      const k = faceKey(n);
+      if (!seen.has(k)) seen.set(k, { normal: n, verts: /* @__PURE__ */ new Set() });
+      seen.get(k).verts.add(vi);
+    }
+    const faces = [];
+    for (const { normal, verts } of seen.values()) {
+      const vs = [...verts].slice(0, 4);
+      faces.push({
+        normal,
+        corners: vs.map((vi) => [pos[vi * 3], pos[vi * 3 + 1], pos[vi * 3 + 2]]),
+        uvs: vs.map((vi) => [uv[vi * 2], uv[vi * 2 + 1]])
+      });
+    }
+    return faces;
+  }
   function meshBox(json, buffers, meshIndex) {
     const prim = json.meshes[meshIndex].primitives[0];
     const posIdx = prim.attributes.POSITION;
     const acc = json.accessors[posIdx];
-    if (acc.min && acc.max) return { min: acc.min.slice(), max: acc.max.slice(), faces: [] };
+    if (acc.min && acc.max) return { min: acc.min.slice(), max: acc.max.slice(), faces: readFaces(json, buffers, meshIndex) };
     const { data } = readAccessor(json, buffers, posIdx);
     const min = [Infinity, Infinity, Infinity], max = [-Infinity, -Infinity, -Infinity];
     for (let i = 0; i < data.length; i += 3) {
@@ -150,7 +212,7 @@
         max[c] = Math.max(max[c], data[i + c]);
       }
     }
-    return { min, max, faces: [] };
+    return { min, max, faces: readFaces(json, buffers, meshIndex) };
   }
   function buildNode(json, buffers, idx) {
     const n = json.nodes[idx];
@@ -172,7 +234,7 @@
     const buffers = resolveBuffers(json, bin, opts.externalLoader);
     const sceneDef = json.scenes[json.scene ?? 0];
     const roots = sceneDef.nodes.map((i) => buildNode(json, buffers, i));
-    return { roots, texture: null, animations: [], _json: json, _buffers: buffers };
+    return { roots, texture: readTexture(json, buffers, opts), animations: [], _json: json, _buffers: buffers };
   }
 
   // src/convention.js
@@ -197,6 +259,31 @@
   }
 
   // src/convert.js
+  function bbFaceName(normal) {
+    const f = CONVENTION.flip;
+    const n = [normal[0] * f[0], normal[1] * f[1], normal[2] * f[2]];
+    const ax = [Math.abs(n[0]), Math.abs(n[1]), Math.abs(n[2])];
+    const d = ax[0] >= ax[1] && ax[0] >= ax[2] ? 0 : ax[1] >= ax[2] ? 1 : 2;
+    const s = Math.sign(n[d]);
+    if (d === 0) return s >= 0 ? "east" : "west";
+    if (d === 1) return s >= 0 ? "up" : "down";
+    return s >= 0 ? "south" : "north";
+  }
+  function faceToUv(face, tex) {
+    const us = face.uvs.map((p) => p[0] * tex.width);
+    const vs = face.uvs.map((p) => p[1] * tex.height);
+    return {
+      uv: [Math.min(...us), Math.min(...vs), Math.max(...us), Math.max(...vs)],
+      rotation: 0
+      // refined in calibration if a texture looks rotated
+    };
+  }
+  function buildFaces(box, tex) {
+    if (!tex || !box.faces || !box.faces.length) return null;
+    const out = {};
+    for (const face of box.faces) out[bbFaceName(face.normal)] = faceToUv(face, tex);
+    return out;
+  }
   function convert(scene) {
     const groups = [];
     const cubes = [];
@@ -219,7 +306,7 @@
         const hi = applyPos([accum[0] + node.box.max[0], accum[1] + node.box.max[1], accum[2] + node.box.max[2]]);
         const from = [Math.min(lo[0], hi[0]), Math.min(lo[1], hi[1]), Math.min(lo[2], hi[2])];
         const to = [Math.max(lo[0], hi[0]), Math.max(lo[1], hi[1]), Math.max(lo[2], hi[2])];
-        cubes.push({ name: node.name, from, to, origin, rotation: [0, 0, 0], group: groupIndex, faces: null });
+        cubes.push({ name: node.name, from, to, origin, rotation: [0, 0, 0], group: groupIndex, faces: buildFaces(node.box, scene.texture) });
       }
       for (const child of node.children) walk(child, accum, groupIndex);
     }
@@ -229,24 +316,38 @@
 
   // src/adapter.js
   function buildIntoProject(model) {
-    const affected = { elements: [], outliner: true, group: void 0 };
-    Undo.initEdit(affected);
+    Undo.initEdit({ elements: [], textures: [], outliner: true });
+    let texture = null;
+    if (model.texture) {
+      texture = new Texture({ name: model.texture.name }).fromDataURL(model.texture.dataUrl).add(false);
+      if (model.texture.width) Project.texture_width = model.texture.width;
+      if (model.texture.height) Project.texture_height = model.texture.height;
+    }
+    if (model.cubes.some((c) => c.faces)) Project.box_uv = false;
     const bbGroups = [];
     model.groups.forEach((g, i) => {
       const group = new Group({ name: g.name || `bone_${i}`, origin: g.origin, rotation: g.rotation });
-      const parent = g.parent != null ? bbGroups[g.parent] : "root";
-      group.addTo(parent === "root" ? void 0 : parent).init();
+      group.addTo(g.parent != null ? bbGroups[g.parent] : void 0).init();
       bbGroups[i] = group;
     });
     const cubes = [];
     for (const c of model.cubes) {
       const cube = new Cube({ name: c.name, from: c.from, to: c.to, origin: c.origin, rotation: c.rotation });
       cube.addTo(bbGroups[c.group]).init();
+      if (c.faces && texture) {
+        for (const [name, face] of Object.entries(c.faces)) {
+          if (!cube.faces[name]) continue;
+          cube.faces[name].uv = face.uv;
+          cube.faces[name].rotation = face.rotation;
+          cube.faces[name].texture = texture.uuid;
+        }
+      }
       cubes.push(cube);
     }
     Canvas.updateAll();
-    Undo.finishEdit("Import glTF", { elements: cubes, outliner: true });
-    return { groups: bbGroups, cubes };
+    if (texture) Canvas.updateAllUVs && Canvas.updateAllUVs();
+    Undo.finishEdit("Import glTF", { elements: cubes, textures: texture ? [texture] : [], outliner: true });
+    return { groups: bbGroups, cubes, texture };
   }
 
   // src/entry.js
