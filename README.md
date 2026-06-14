@@ -13,9 +13,27 @@ importer brings models in as **raw meshes** — so a model originally built from
 longer editable as cubes. Cubeport reconstructs the actual cubes, so you don't have to
 recreate every box by hand.
 
-**Best for:** box-based / Minecraft-style models — especially ones made in a voxel/box tool
-and exported to glTF. Arbitrary sculpted meshes import as one bounding-box cube each (this
-is not a general mesh importer — use the `gltf_importer` plugin for that).
+## ⚠️ Works on cube-based models only
+
+Cubeport rebuilds **cubes**, so the source model has to actually *be* made of cubes/boxes.
+It is **not** a mesh-to-cubes (voxelizing) converter — it won't turn a sculpted model into
+a blocky one.
+
+✅ **Works great:**
+- Minecraft models — Bedrock/Java entities, blocks, items
+- Models built in Blockbench / MagicaVoxel / other box tools and exported to glTF
+- Anything whose geometry is made of axis-aligned boxes
+
+❌ **Won't work (most Sketchfab models are like this):**
+- Sculpted, organic, or 3D-scanned models (dragons, characters, props)
+- High-poly / arbitrary triangle meshes
+
+For non-box models, each mesh just becomes a single bounding-box cube — a crude blocky
+stand-in, **not** a faithful import. If you want raw mesh import instead, use the separate
+[`gltf_importer`](https://github.com/JannisX11/blockbench-plugins) plugin.
+
+> **Rule of thumb:** if it already looks blocky, Cubeport will love it. If it looks smooth
+> and sculpted, it won't.
 
 ## Install
 

@@ -472,7 +472,7 @@
   Plugin.register("cubeport", {
     title: "Cubeport",
     author: "Nicholas Cerdon",
-    description: "Import glTF/glb models as editable cubes, bones, textures, and animations \u2014 for re-importing Minecraft-style models (e.g. from Sketchfab) as real editable boxes instead of raw meshes.",
+    description: "Import CUBE-BASED glTF/glb models into Blockbench as editable cubes, bones, textures, and animations \u2014 for re-importing Minecraft-style models (e.g. from Sketchfab). Works on box geometry only, not sculpted/organic meshes.",
     icon: "fa-cubes",
     version: "1.0.0",
     variant: "both",
