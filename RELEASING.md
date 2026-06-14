@@ -48,7 +48,7 @@ The store is the repo **JannisX11/blockbench-plugins**. Submission = a pull requ
 "cubeport": {
   "title": "Cubeport",
   "author": "Nicholas Cerdon",
-  "description": "Import CUBE-BASED glTF/glb models into Blockbench as editable cubes, bones, textures, and animations — for re-importing Minecraft-style models (e.g. from Sketchfab). Works on box geometry only, not sculpted/organic meshes.",
+  "description": "Re-import Blockbench-made Minecraft models that were exported to glTF/glb (e.g. via Sketchfab) back into Blockbench as editable cubes, bones, textures, and animations. For cube-based Blockbench/Minecraft models only — not sculpted or organic meshes.",
   "icon": "fa-cubes",
   "version": "1.0.0",
   "variant": "both",

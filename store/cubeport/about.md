@@ -22,19 +22,21 @@ model comes in as editable bones + cubes with its texture and animations applied
 - **Texture + UVs** — the embedded/linked texture, with each face's UVs mapped (per-face UV).
 - **Animations** — glTF animation clips converted to Blockbench keyframe animations.
 
-## ⚠️ Works on cube-based models only
+## ⚠️ Made for Blockbench-exported Minecraft models
 
-Cubeport rebuilds **cubes**, so the model has to actually *be* made of cubes/boxes. It is
-**not** a mesh-to-cubes (voxelizing) converter.
+Cubeport is built for one round-trip: a **Minecraft model made in Blockbench**, exported to
+**glTF/glb** (e.g. uploaded to Sketchfab), brought **back** into Blockbench as editable
+cubes. That's what it's verified on — the scale (16 px = 1 block) and axis/rotation
+conventions it expects are exactly what Blockbench's own glTF exporter produces.
 
-- ✅ **Works:** Minecraft models (Bedrock/Java entities, blocks, items), and anything built
-  in Blockbench / MagicaVoxel / other box tools and exported to glTF.
-- ❌ **Won't work:** sculpted, organic, or scanned models — which is **most Sketchfab
-  models** (dragons, characters, high-poly props). Each non-box mesh just becomes one
-  bounding-box cube, not a faithful import.
+- ✅ **Works:** Minecraft models originally made in Blockbench (Bedrock/Java entities,
+  blocks, items), exported to glTF/glb and re-imported.
+- ❌ **Won't work:** sculpted, organic, or scanned models — i.e. **most Sketchfab models**
+  (dragons, characters, high-poly props). Cubeport rebuilds cubes; it does not voxelize
+  meshes. Cube models from other tools may differ in scale/orientation and aren't guaranteed.
 
-**Rule of thumb:** if it already looks blocky, Cubeport will love it; if it looks smooth and
-sculpted, it won't. For raw mesh import, use the separate `gltf_importer` plugin.
+**Rule of thumb:** built out of cubes in Blockbench and looks blocky → Cubeport loves it;
+smooth and sculpted → it won't. For raw mesh import, use the separate `gltf_importer` plugin.
 
 ## Usage
 

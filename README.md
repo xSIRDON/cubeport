@@ -13,27 +13,29 @@ importer brings models in as **raw meshes** — so a model originally built from
 longer editable as cubes. Cubeport reconstructs the actual cubes, so you don't have to
 recreate every box by hand.
 
-## ⚠️ Works on cube-based models only
+## ⚠️ Made for Blockbench-exported Minecraft models
 
-Cubeport rebuilds **cubes**, so the source model has to actually *be* made of cubes/boxes.
-It is **not** a mesh-to-cubes (voxelizing) converter — it won't turn a sculpted model into
-a blocky one.
+Cubeport is built for one specific round-trip: a **Minecraft model made in Blockbench**,
+**exported to glTF/glb** (for example uploaded to Sketchfab), brought **back** into
+Blockbench as editable cubes. That's the case it's verified on — because the scale
+(16 px = 1 block) and the axis/rotation conventions it expects are exactly what Blockbench's
+own glTF exporter produces.
 
-✅ **Works great:**
-- Minecraft models — Bedrock/Java entities, blocks, items
-- Models built in Blockbench / MagicaVoxel / other box tools and exported to glTF
-- Anything whose geometry is made of axis-aligned boxes
+✅ **Works:**
+- Minecraft models originally made in Blockbench (Bedrock/Java entities, blocks, items),
+  exported to glTF/glb and re-imported.
 
-❌ **Won't work (most Sketchfab models are like this):**
-- Sculpted, organic, or 3D-scanned models (dragons, characters, props)
-- High-poly / arbitrary triangle meshes
+❌ **Won't work:**
+- Sculpted, organic, or 3D-scanned models — i.e. **most Sketchfab models** (dragons,
+  characters, high-poly props). Cubeport rebuilds cubes; it does **not** voxelize meshes.
+- Anything not made of axis-aligned boxes.
 
-For non-box models, each mesh just becomes a single bounding-box cube — a crude blocky
-stand-in, **not** a faithful import. If you want raw mesh import instead, use the separate
-[`gltf_importer`](https://github.com/JannisX11/blockbench-plugins) plugin.
+Cube models made in *other* tools may import, but aren't guaranteed — their scale or
+orientation can differ from Blockbench's conventions. For raw mesh import of any glTF, use
+the separate [`gltf_importer`](https://github.com/JannisX11/blockbench-plugins) plugin.
 
-> **Rule of thumb:** if it already looks blocky, Cubeport will love it. If it looks smooth
-> and sculpted, it won't.
+> **Rule of thumb:** if it was built out of cubes in Blockbench and looks blocky, Cubeport
+> will love it. If it looks smooth and sculpted, it won't.
 
 ## Install
 
